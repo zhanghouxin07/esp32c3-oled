@@ -1,4 +1,4 @@
-/* ESP32-C3 Pro OLED - Blink + OLED Display
+/* ESP32-C3 Pro OLED - Blink + OLED Display + WiFi
  *
  * Board: ESP32-C3 Pro OLED
  * LED: GPIO8
@@ -8,10 +8,21 @@
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/event_groups.h"
 #include "driver/gpio.h"
 #include "driver/i2c.h"
 #include "esp_log.h"
+#include "esp_wifi.h"
+#include "esp_event.h"
+#include "esp_netif.h"
+#include "nvs_flash.h"
+#include "lwip/inet.h"
 #include "ssd1306_fonts.h"
+
+// WiFi credentials
+#define WIFI_SSID       "Huawei-2105-new"
+#define WIFI_PASS       "W626262C"
+#define WIFI_MAX_RETRY  3
 
 // Pin definitions
 #define BLINK_GPIO     8
@@ -166,6 +177,65 @@ static void oled_draw_string(uint8_t x, uint8_t y, const char *str, uint8_t max_
     }
 }
 
+// ── WiFi ─────────────────────────────────────────────────────
+
+#define WIFI_CONNECTED_BIT BIT0
+
+static EventGroupHandle_t wifi_event_group;
+static int wifi_retry_count = 0;
+static char wifi_ip[16] = "0.0.0.0";
+
+static void wifi_event_handler(void *arg, esp_event_base_t base,
+                               int32_t id, void *data)
+{
+    if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
+        esp_wifi_connect();
+    } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
+        if (wifi_retry_count < WIFI_MAX_RETRY) {
+            wifi_retry_count++;
+            esp_wifi_connect();
+        } else {
+            xEventGroupSetBits(wifi_event_group, WIFI_CONNECTED_BIT);
+        }
+    } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
+        ip_event_got_ip_t *event = data;
+        esp_ip4addr_ntoa(&event->ip_info.ip, wifi_ip, sizeof(wifi_ip));
+        wifi_retry_count = 0;
+        xEventGroupSetBits(wifi_event_group, WIFI_CONNECTED_BIT);
+    }
+}
+
+static void wifi_init_sta(void)
+{
+    wifi_event_group = xEventGroupCreate();
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    esp_netif_create_default_wifi_sta();
+
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+
+    esp_event_handler_instance_t instance_any;
+    esp_event_handler_instance_t instance_got_ip;
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT,
+                       ESP_EVENT_ANY_ID, &wifi_event_handler, NULL, &instance_any));
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT,
+                       IP_EVENT_STA_GOT_IP, &wifi_event_handler, NULL, &instance_got_ip));
+
+    wifi_config_t wifi_config = {
+        .sta = {
+            .ssid = WIFI_SSID,
+            .password = WIFI_PASS,
+            .threshold.authmode = WIFI_AUTH_WPA2_PSK,
+        },
+    };
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
+    ESP_ERROR_CHECK(esp_wifi_start());
+
+    ESP_LOGI(TAG, "WiFi connecting to %s...", WIFI_SSID);
+}
+
 // ── Main ─────────────────────────────────────────────────
 
 void app_main(void)
@@ -191,12 +261,37 @@ void app_main(void)
     // Initialize OLED
     oled_init();
     oled_clear();
-    oled_draw_string(1, 4, "zhanghouxin", 11);
-    oled_draw_string(1, 16, "ESP32C3 OLED", 11);
-    oled_draw_string(1, 28, "Hello!", 11);
+    oled_draw_string(1, 4, "Connecting...", 11);
     oled_refresh();
 
-    ESP_LOGI(TAG, "OLED ready");
+    // Initialize NVS (needed by WiFi)
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+
+    // Connect to WiFi
+    wifi_init_sta();
+
+    // Wait for connection, update OLED
+    EventBits_t bits = xEventGroupWaitBits(wifi_event_group, WIFI_CONNECTED_BIT,
+                                           pdFALSE, pdFALSE, 10000 / portTICK_PERIOD_MS);
+
+    oled_clear();
+    if (bits & WIFI_CONNECTED_BIT && strcmp(wifi_ip, "0.0.0.0") != 0) {
+        oled_draw_string(1, 4, "zhanghouxin", 11);
+        oled_draw_string(1, 16, "WiFi OK", 11);
+        oled_draw_string(1, 28, wifi_ip, 11);
+    } else {
+        oled_draw_string(1, 4, "zhanghouxin", 11);
+        oled_draw_string(1, 16, "WiFi FAIL", 11);
+        oled_draw_string(1, 28, "Check creds", 11);
+    }
+    oled_refresh();
+
+    ESP_LOGI(TAG, "OLED ready, WiFi IP: %s", wifi_ip);
 
     // Blink loop
     bool state = false;

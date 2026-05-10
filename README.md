@@ -150,7 +150,7 @@ esp32c3-oled/
 
 - [x] 板子验证 — OLED 亮屏测试通过（Arduino U8g2）
 - [x] ESP-IDF 项目搭建 — LED 闪烁 + OLED 文字显示
-- [ ] WiFi 连接 + OLED 显示
+- [x] WiFi 连接 + OLED 显示
 - [ ] NTP 网络时钟
 - [ ] ......（持续更新）
 
