@@ -315,10 +315,11 @@ static void start_webserver(void)
 {
     httpd_handle_t server = NULL;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+    config.server_port = 8080;
     config.lru_purge_enable = true;
     if (httpd_start(&server, &config) == ESP_OK) {
         httpd_register_uri_handler(server, &root_uri);
-        ESP_LOGI(TAG, "Web server started: http://%s", wifi_ip);
+        ESP_LOGI(TAG, "Web server started: http://%s:8080", wifi_ip);
     }
 }
 
@@ -361,26 +362,24 @@ void app_main(void)
     // Connect to WiFi
     wifi_init_sta();
 
-    // Wait for connection, update OLED
-    EventBits_t bits = xEventGroupWaitBits(wifi_event_group, WIFI_CONNECTED_BIT,
-                                           pdFALSE, pdFALSE, 10000 / portTICK_PERIOD_MS);
+    // Wait for WiFi (blocks until connected or retries exhausted)
+    xEventGroupWaitBits(wifi_event_group, WIFI_CONNECTED_BIT,
+                        pdFALSE, pdFALSE, portMAX_DELAY);
 
     oled_clear();
-    if (bits & WIFI_CONNECTED_BIT && strcmp(wifi_ip, "0.0.0.0") != 0) {
+    if (strcmp(wifi_ip, "0.0.0.0") != 0) {
         oled_draw_string(1, 4, "zhanghouxin", 11);
         oled_draw_string(1, 16, "WiFi OK", 11);
         oled_draw_string(1, 28, wifi_ip, 11);
+        ESP_LOGI(TAG, "WiFi connected, IP: %s", wifi_ip);
+        start_webserver();
     } else {
-        oled_draw_string(1, 4, "zhanghouxin", 11);
-        oled_draw_string(1, 16, "WiFi FAIL", 11);
-        oled_draw_string(1, 28, "Check creds", 11);
+        oled_draw_string(1, 4, "WiFi FAIL", 11);
+        oled_draw_string(1, 16, "Check", 11);
+        oled_draw_string(1, 28, "credentials", 11);
+        ESP_LOGE(TAG, "WiFi connection failed");
     }
     oled_refresh();
-
-    ESP_LOGI(TAG, "OLED ready, WiFi IP: %s", wifi_ip);
-
-    // Start web server
-    start_webserver();
 
     // Blink loop
     bool state = false;
