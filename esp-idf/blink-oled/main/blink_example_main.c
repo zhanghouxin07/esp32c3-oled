@@ -316,6 +316,7 @@ static void start_webserver(void)
     httpd_handle_t server = NULL;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = 8080;
+    config.stack_size = 8192;
     config.lru_purge_enable = true;
     if (httpd_start(&server, &config) == ESP_OK) {
         httpd_register_uri_handler(server, &root_uri);
