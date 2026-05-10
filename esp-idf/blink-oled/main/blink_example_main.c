@@ -1,4 +1,4 @@
-/* ESP32-C3 Pro OLED - Blink + OLED Display + WiFi
+/* ESP32-C3 Pro OLED - Blink + OLED Display + WiFi + Web Server
  *
  * Board: ESP32-C3 Pro OLED
  * LED: GPIO8
@@ -6,15 +6,19 @@
  */
 #include <stdio.h>
 #include <string.h>
+#include <sys/param.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
 #include "driver/gpio.h"
 #include "driver/i2c.h"
+#include "driver/temperature_sensor.h"
 #include "esp_log.h"
 #include "esp_wifi.h"
 #include "esp_event.h"
 #include "esp_netif.h"
+#include "esp_http_server.h"
+#include "esp_timer.h"
 #include "nvs_flash.h"
 #include "lwip/inet.h"
 #include "ssd1306_fonts.h"
@@ -236,6 +240,88 @@ static void wifi_init_sta(void)
     ESP_LOGI(TAG, "WiFi connecting to %s...", WIFI_SSID);
 }
 
+// ── Web Server ───────────────────────────────────────────────
+
+static int get_wifi_rssi(void)
+{
+    wifi_ap_record_t ap;
+    if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK)
+        return ap.rssi;
+    return 0;
+}
+
+static esp_err_t root_get_handler(httpd_req_t *req)
+{
+    char resp[2048];
+    uint64_t uptime_us = esp_timer_get_time();
+    uint32_t uptime_s = (uint32_t)(uptime_us / 1000000);
+    int rssi = get_wifi_rssi();
+    uint32_t free_heap = esp_get_free_heap_size();
+
+    // Get internal temperature
+    float temp = 0;
+    temperature_sensor_handle_t temp_sensor = NULL;
+    temperature_sensor_config_t tsens = TEMPERATURE_SENSOR_CONFIG_DEFAULT(-10, 80);
+    if (temperature_sensor_install(&tsens, &temp_sensor) == ESP_OK
+        && temperature_sensor_enable(temp_sensor) == ESP_OK
+        && temperature_sensor_get_celsius(temp_sensor, &temp) == ESP_OK) {
+        temperature_sensor_disable(temp_sensor);
+        temperature_sensor_uninstall(temp_sensor);
+    }
+
+    snprintf(resp, sizeof(resp),
+        "<!DOCTYPE html><html><head>"
+        "<meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<meta http-equiv='refresh' content='5'>"
+        "<title>ESP32-C3 OLED</title>"
+        "<style>"
+        "*{margin:0;padding:0;box-sizing:border-box;font-family:-apple-system,sans-serif}"
+        "body{padding:20px;background:#1a1a2e;color:#eee}"
+        "h1{font-size:22px;margin-bottom:16px;color:#e94560}"
+        ".card{background:#16213e;border-radius:12px;padding:16px;margin-bottom:12px}"
+        ".card h2{font-size:14px;color:#888;margin-bottom:4px}"
+        ".card .val{font-size:28px;font-weight:700}"
+        ".row{display:flex;gap:12px}"
+        ".row .card{flex:1}"
+        ".rssi-bar{height:6px;border-radius:3px;background:#333;margin-top:8px;overflow:hidden}"
+        ".rssi-bar div{height:100%%;border-radius:3px;background:#e94560}"
+        ".ip{color:#0f3460;font-size:13px;text-align:center;margin-top:16px}"
+        "</style></head><body>"
+        "<h1>ESP32-C3 OLED</h1>"
+        "<div class='row'>"
+        "<div class='card'><h2>Uptime</h2><div class='val'>%02u:%02u:%02u</div></div>"
+        "<div class='card'><h2>Temp</h2><div class='val'>%.1f&deg;C</div></div>"
+        "</div>"
+        "<div class='card'><h2>WiFi RSSI</h2><div class='val'>%d dBm</div>"
+        "<div class='rssi-bar'><div style='width:%d%%'></div></div></div>"
+        "<div class='card'><h2>Free Heap</h2><div class='val'>%lu KB</div></div>"
+        "<div class='ip'>%s</div>"
+        "</body></html>",
+        (unsigned)(uptime_s / 3600), (unsigned)((uptime_s % 3600) / 60), (unsigned)(uptime_s % 60),
+        temp, rssi, (rssi > -30) ? 100 : (rssi > -67) ? 80 : (rssi > -80) ? 60 : (rssi > -90) ? 40 : 20,
+        free_heap / 1024, wifi_ip);
+    httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
+static const httpd_uri_t root_uri = {
+    .uri       = "/",
+    .method    = HTTP_GET,
+    .handler   = root_get_handler,
+};
+
+static void start_webserver(void)
+{
+    httpd_handle_t server = NULL;
+    httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+    config.lru_purge_enable = true;
+    if (httpd_start(&server, &config) == ESP_OK) {
+        httpd_register_uri_handler(server, &root_uri);
+        ESP_LOGI(TAG, "Web server started: http://%s", wifi_ip);
+    }
+}
+
 // ── Main ─────────────────────────────────────────────────
 
 void app_main(void)
@@ -292,6 +378,9 @@ void app_main(void)
     oled_refresh();
 
     ESP_LOGI(TAG, "OLED ready, WiFi IP: %s", wifi_ip);
+
+    // Start web server
+    start_webserver();
 
     // Blink loop
     bool state = false;
