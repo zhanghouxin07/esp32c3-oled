@@ -152,13 +152,14 @@ static void oled_draw_char(uint8_t x, uint8_t y, char c)
     }
 }
 
-static void oled_draw_string(uint8_t x, uint8_t y, const char *str)
+static void oled_draw_string(uint8_t x, uint8_t y, const char *str, uint8_t max_len)
 {
-    while (*str) {
+    uint8_t start_x = x;
+    while (*str && max_len--) {
         oled_draw_char(x, y, *str);
-        x += 6;                             // chSize/2 = 6 spacing
-        if (x + 6 > OLED_WIDTH) {
-            x = 0;
+        x += 6;
+        if (x + 6 > start_x + OLED_WIDTH) {
+            x = start_x;
             y += 12;
         }
         str++;
@@ -190,9 +191,9 @@ void app_main(void)
     // Initialize OLED
     oled_init();
     oled_clear();
-    oled_draw_string(1, 4, "zhanghouxin");
-    oled_draw_string(1, 16, "ESP32-C3 OLED");
-    oled_draw_string(1, 28, "Hello!");
+    oled_draw_string(1, 4, "zhanghouxin", 11);
+    oled_draw_string(1, 16, "ESP32C3 OLED", 11);
+    oled_draw_string(1, 28, "Hello!", 11);
     oled_refresh();
 
     ESP_LOGI(TAG, "OLED ready");
