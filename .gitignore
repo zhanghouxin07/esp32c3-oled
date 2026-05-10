@@ -1,0 +1,29 @@
+# Build outputs
+build/
+*.bin
+*.elf
+*.map
+*.hex
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.pyc
+.env
+
+# Archives (original vendor files)
+*.zip
+*.rar
+
+# ESP-IDF
+sdkconfig
+sdkconfig.old
