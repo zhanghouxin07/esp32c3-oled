@@ -136,15 +136,20 @@ esp32c3-oled/
 │   ├── oled_test/
 │   │   └── oled_test.ino      # OLED 亮屏测试
 │   └── README.md              # Arduino 开发说明
-└── esp-idf/                   # ESP-IDF 项目（开发中）
+└── esp-idf/                   # ESP-IDF 项目
+    └── blink-oled/            # LED 闪烁 + OLED 显示
+        ├── main/
+        │   └── blink_example_main.c  # 驱动代码（初始化、framebuffer、字体渲染）
+        └── managed_components/
+            └── espressif__ssd1306/   # SSD1306 组件（字体数据）
 ```
 
 ---
 
-## 🚀 开发计划
+## 🚀 开发进度
 
-- [x] 板子验证 — OLED 亮屏测试通过
-- [ ] ESP-IDF 项目模板搭建
+- [x] 板子验证 — OLED 亮屏测试通过（Arduino U8g2）
+- [x] ESP-IDF 项目搭建 — LED 闪烁 + OLED 文字显示
 - [ ] WiFi 连接 + OLED 显示
 - [ ] NTP 网络时钟
 - [ ] ......（持续更新）

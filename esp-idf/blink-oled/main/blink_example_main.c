@@ -204,6 +204,6 @@ void app_main(void)
         state = !state;
         gpio_set_level(BLINK_GPIO, state);
         ESP_LOGI(TAG, "LED %s", state ? "ON" : "OFF");
-        vTaskDelay(500 / portTICK_PERIOD_MS);
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
 }
