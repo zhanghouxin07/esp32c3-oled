@@ -21,10 +21,11 @@
 #define I2C_FREQ_HZ    400000
 #define OLED_ADDR      0x3C
 
-// OLED dimensions (72x40)
+// OLED dimensions (72x40) within SSD1306 128x64 address space
 #define OLED_WIDTH     72
 #define OLED_HEIGHT    40
 #define OLED_PAGES     ((OLED_HEIGHT + 7) / 8)  // 5 pages
+#define COL_OFFSET     28  // ER 72x40 glass starts at SEG 28 within 128-wide GDDRAM
 
 static const char *TAG = "esp32c3-oled";
 
@@ -41,8 +42,9 @@ static void oled_write_cmd(uint8_t cmd)
     i2c_master_write_byte(c, 0x00, true);  // Co=0, D/C#=0 (command)
     i2c_master_write_byte(c, cmd, true);
     i2c_master_stop(c);
-    i2c_master_cmd_begin(I2C_PORT, c, 100 / portTICK_PERIOD_MS);
+    esp_err_t ret = i2c_master_cmd_begin(I2C_PORT, c, 100 / portTICK_PERIOD_MS);
     i2c_cmd_link_delete(c);
+    if (ret != ESP_OK) ESP_LOGE(TAG, "I2C cmd 0x%02x failed: %s", cmd, esp_err_to_name(ret));
 }
 
 static void oled_write_data_bulk(const uint8_t *data, size_t len)
@@ -53,11 +55,12 @@ static void oled_write_data_bulk(const uint8_t *data, size_t len)
     i2c_master_write_byte(c, 0x40, true);  // Co=0, D/C#=1 (data)
     i2c_master_write(c, data, len, true);
     i2c_master_stop(c);
-    i2c_master_cmd_begin(I2C_PORT, c, 100 / portTICK_PERIOD_MS);
+    esp_err_t ret = i2c_master_cmd_begin(I2C_PORT, c, 100 / portTICK_PERIOD_MS);
     i2c_cmd_link_delete(c);
+    if (ret != ESP_OK) ESP_LOGE(TAG, "I2C data write (%zu bytes) failed: %s", len, esp_err_to_name(ret));
 }
 
-// ── OLED init for 72x40 SSD1306 ──────────────────────────
+// ── OLED init for 72x40 SSD1306 (U8g2 match) ─────────────
 
 static void oled_init(void)
 {
@@ -68,23 +71,25 @@ static void oled_init(void)
     oled_write_cmd(0x27);  // 40 rows - 1 = 39 (0x27)
     oled_write_cmd(0xD3);  // display offset
     oled_write_cmd(0x00);
-    oled_write_cmd(0x40);  // display start line
+    oled_write_cmd(0xAD);  // internal IREF setting
+    oled_write_cmd(0x30);
     oled_write_cmd(0x8D);  // charge pump
     oled_write_cmd(0x14);  // enable
+    oled_write_cmd(0x40);  // display start line = 0
+    oled_write_cmd(0xA6);  // normal (non-inverted)
+    oled_write_cmd(0xA4);  // output RAM to display
     oled_write_cmd(0x20);  // memory addressing mode
-    oled_write_cmd(0x01);  // vertical addressing mode
-    oled_write_cmd(0xA1);  // segment remap (column 127 mapped to SEG0)
-    oled_write_cmd(0xC8);  // COM scan direction (remapped)
+    oled_write_cmd(0x01);  // vertical mode (matches framebuffer layout)
+    oled_write_cmd(0xA1);  // SEG remap (col 127 → SEG0, correct for ER module)
+    oled_write_cmd(0xC8);  // COM scan remapped
     oled_write_cmd(0xDA);  // COM pins config
     oled_write_cmd(0x12);  // alternative config
     oled_write_cmd(0x81);  // contrast
-    oled_write_cmd(0xCF);
+    oled_write_cmd(0xAF);
     oled_write_cmd(0xD9);  // pre-charge
-    oled_write_cmd(0xF1);
+    oled_write_cmd(0x22);
     oled_write_cmd(0xDB);  // vcomh
-    oled_write_cmd(0x40);
-    oled_write_cmd(0xA4);  // display all on resume
-    oled_write_cmd(0xA6);  // normal (non-inverted)
+    oled_write_cmd(0x20);
     oled_write_cmd(0x2E);  // deactivate scroll
     oled_write_cmd(0xAF);  // display on
 }
@@ -109,33 +114,39 @@ static void oled_draw_pixel(uint8_t x, uint8_t y, uint8_t color)
 
 static void oled_refresh(void)
 {
-    // Set column range: 0 .. 71
+    // Set column range with offset to align with glass
     oled_write_cmd(0x21);  // set column address
-    oled_write_cmd(0);
-    oled_write_cmd(OLED_WIDTH - 1);
+    oled_write_cmd(COL_OFFSET);
+    oled_write_cmd(COL_OFFSET + OLED_WIDTH - 1);
 
-    // Set page range: 0 .. 4
+    // Set page range
     oled_write_cmd(0x22);  // set page address
     oled_write_cmd(0);
     oled_write_cmd(OLED_PAGES - 1);
 
-    // Send framebuffer
-    for (int page = 0; page < OLED_PAGES; page++) {
-        oled_write_data_bulk(&framebuffer[0][page], OLED_WIDTH);
-    }
+    // Send whole framebuffer in one shot (vertical mode: col0_p0..p4, col1_p0..p4, ...)
+    oled_write_data_bulk(&framebuffer[0][0], sizeof(framebuffer));
 }
 
-// ── Text rendering (uses 1206 font from managed component) ──
+// ── Text rendering (font1206: 6 cols x 12 rows, byte-pair per column) ──
 
 static void oled_draw_char(uint8_t x, uint8_t y, char c)
 {
     if (c < ' ' || c > '~') c = ' ';
     c -= ' ';
-    for (int col = 0; col < 12; col++) {   // font1206 is 12 columns wide
-        uint8_t line = c_chFont1206[(uint8_t)c][col];
-        for (int row = 0; row < 8; row++) {
-            if (line & (1 << (7 - row))) {
-                oled_draw_pixel(x + col, y + row, 1);
+    uint8_t y0 = y;
+    for (int i = 0; i < 12; i++) {          // 12 font bytes = 6 byte-pairs
+        uint8_t chTemp = c_chFont1206[(uint8_t)c][i];
+        for (int j = 0; j < 8; j++) {       // 8 bits per byte, MSB first
+            if (chTemp & 0x80) {
+                oled_draw_pixel(x, y, 1);
+            }
+            chTemp <<= 1;
+            y++;
+            if ((y - y0) == 12) {           // column height = 12
+                y = y0;
+                x++;
+                break;
             }
         }
     }
@@ -145,10 +156,10 @@ static void oled_draw_string(uint8_t x, uint8_t y, const char *str)
 {
     while (*str) {
         oled_draw_char(x, y, *str);
-        x += 7;  // 6 + 1 spacing
-        if (x + 12 > OLED_WIDTH) {
+        x += 6;                             // chSize/2 = 6 spacing
+        if (x + 6 > OLED_WIDTH) {
             x = 0;
-            y += 10;
+            y += 12;
         }
         str++;
     }
@@ -179,12 +190,12 @@ void app_main(void)
     // Initialize OLED
     oled_init();
     oled_clear();
-    oled_draw_string(1, 4, "ESP32-C3");
-    oled_draw_string(1, 16, "OLED 72x40");
+    oled_draw_string(1, 4, "zhanghouxin");
+    oled_draw_string(1, 16, "ESP32-C3 OLED");
     oled_draw_string(1, 28, "Hello!");
     oled_refresh();
 
-    ESP_LOGI(TAG, "OLED initialized, LED blink loop started");
+    ESP_LOGI(TAG, "OLED ready");
 
     // Blink loop
     bool state = false;
