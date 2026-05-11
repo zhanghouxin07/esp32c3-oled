@@ -318,6 +318,8 @@ static void start_webserver(void)
     config.server_port = 8080;
     config.stack_size = 8192;
     config.lru_purge_enable = true;
+    config.max_header_len = 2048;
+    config.max_uri_len = 1024;
     if (httpd_start(&server, &config) == ESP_OK) {
         httpd_register_uri_handler(server, &root_uri);
         ESP_LOGI(TAG, "Web server started: http://%s:8080", wifi_ip);
