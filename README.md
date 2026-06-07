@@ -4,7 +4,7 @@
 
 ---
 
-## 📋 硬件规格
+## 硬件规格
 
 | 参数 | 规格 |
 |------|------|
@@ -18,7 +18,7 @@
 | **OLED** | SSD1306 72×40 像素（I2C） |
 | **板载 LED** | GPIO8 |
 
-## 🔌 引脚定义
+## 引脚定义
 
 | 引脚 | 功能 |
 |------|------|
@@ -26,139 +26,112 @@
 | **GPIO6 (SCL)** | OLED I2C 时钟线 |
 | **GPIO5 (SDA)** | OLED I2C 数据线 |
 | **GPIO9** | BOOT 按键 |
-| **GPIO7** | 复位按键（？需要确认） |
 
 > 详见 [docs/引脚图.png](docs/引脚图.png) 和 [docs/ESP32C3 OLED原理图.pdf](docs/ESP32C3%20OLED原理图.pdf)
 
 ---
 
-## 🛠 环境搭建
+## 固件功能
 
-### 1. 前提条件
+当前固件 (`arduino/oled_test/`) 实现：
 
-- **操作系统**：Windows + WSL2（Ubuntu 24.04）
-- **USB 连接**：通过 [usbipd-win](https://github.com/dorssel/usbipd-win) 将开发板挂载到 WSL2
-
-#### USB 设备挂载（WSL2）
-
-```bash
-# Windows PowerShell（管理员）
-usbipd bind --busid 1-3
-usbipd attach --wsl --busid 1-3
-```
-
-挂载后 WSL 中可看到设备：
-
-```bash
-ls /dev/ttyACM0
-```
-
-### 2. 安装 ESP-IDF
-
-```bash
-# 安装系统依赖
-sudo apt update && sudo apt install -y ninja-build ccache libusb-1.0-0-dev python3-venv
-
-# 克隆 ESP-IDF v5.4
-mkdir -p ~/esp
-cd ~/esp
-git clone --depth 1 --branch release/v5.4 https://github.com/espressif/esp-idf.git
-
-# 安装 RISC-V 工具链（ESP32-C3）
-cd ~/esp/esp-idf
-./install.sh esp32c3
-
-# 添加 alias 到 ~/.bashrc
-echo 'alias get_idf=". ~/esp/esp-idf/export.sh"' >> ~/.bashrc
-```
-
-### 3. 加载环境
-
-```bash
-get_idf    # 每次打开新终端后执行一次
-```
-
-### 4. 添加 dialout 权限（避免每次使用 sudo）
-
-```bash
-sudo usermod -aG dialout $USER
-# 重新登录 WSL 生效
-```
+- **WiFi 连接** — 启动时 OLED 显示连接进度和状态码
+- **BLE 蓝牙服务** — 广播设备名 "ESP32-C3 OLED"，可通过 nRF Connect 等工具连接
+- **实时状态显示** — OLED 三页循环：
+  - 设备名 + IP 地址
+  - WiFi 信号强度 (RSSI) + 运行时间
+  - BLE 连接状态 + 客户端数
+- **BLE 特征值** — UUID `7a4b0002`，包含运行时间、RSSI、IP 地址，支持 READ/NOTIFY
 
 ---
 
-## 🔥 烧录方法
+## 环境搭建
 
-### 方法一：ESP-IDF 编译烧录
+### 方案一：PlatformIO（推荐）
+
+安装 [VS Code](https://code.visualstudio.com/) + [PlatformIO 扩展](https://platformio.org/)，直接打开 `arduino/oled_test/` 目录。
+
+```bash
+# 编译
+pio run
+
+# 烧录
+pio run -t upload --upload-port COM3
+
+# 查看串口输出（USB-Serial/JTAG 使用 ets_printf）
+pio device monitor --port COM3 --baud 115200
+```
+
+### 方案二：ESP-IDF
 
 ```bash
 get_idf
-cd esp-idf/
+cd esp-idf/blink-oled/
 idf.py set-target esp32c3
-idf.py menuconfig       # 配置项目
-idf.py build            # 编译
-idf.py -p /dev/ttyACM0 flash    # 烧录
-idf.py -p /dev/ttyACM0 monitor  # 查看串口输出
+idf.py build
+idf.py -p /dev/ttyACM0 flash monitor
 ```
 
-### 方法二：Arduino 方式
+### 方案三：Arduino IDE
 
-Arduino 代码位于 [arduino/oled_test/](arduino/oled_test/) 目录。
-
-使用 [Arduino IDE](https://www.arduino.cc/en/software) 或 [arduino-cli](https://arduino.github.io/arduino-cli/) 打开 `.ino` 文件，选择 **ESP32-C3** 开发板后编译烧录。
-
-### 方法三：烧录预编译固件
-
-资料包中已包含编译好的 `.bin` 文件：
-
-```bash
-esptool.py --chip esp32c3 -p /dev/ttyACM0 -b 460800 \
-  --before default_reset --after hard_reset write_flash \
-  --flash_mode dio --flash_size 2MB --flash_freq 80m \
-  0x0        bootloader.bin \
-  0x8000     partitions.bin \
-  0x10000    firmware.bin
-```
+使用 [Arduino IDE](https://www.arduino.cc/en/software) 打开 `.ino` 文件，安装 **ESP32** 开发板支持包和 **U8g2** 库，选择 **ESP32-C3** 开发板后编译烧录。
 
 ---
 
-## 📂 项目结构
+## 项目结构
 
 ```
 esp32c3-oled/
 ├── README.md                  # 本文件
 ├── .gitignore
 ├── docs/                      # 板子技术资料
-│   ├── 引脚图.png             # 引脚定义
-│   ├── 尺寸图.jpg             # 板子尺寸
-│   └── ESP32C3 OLED原理图.pdf # 电路原理图
+│   ├── 引脚图.png
+│   ├── 尺寸图.jpg
+│   └── ESP32C3 OLED原理图.pdf
 ├── arduino/                   # Arduino 框架代码
 │   ├── oled_test/
-│   │   └── oled_test.ino      # OLED 亮屏测试
-│   └── README.md              # Arduino 开发说明
+│   │   ├── platformio.ini     # PlatformIO 配置
+│   │   └── src/
+│   │       └── oled_test.ino  # 主程序（WiFi + BLE + OLED）
+│   └── README.md
 └── esp-idf/                   # ESP-IDF 项目
     └── blink-oled/            # LED 闪烁 + OLED 显示
         ├── main/
-        │   └── blink_example_main.c  # 驱动代码（初始化、framebuffer、字体渲染）
+        │   └── blink_example_main.c
         └── managed_components/
-            └── espressif__ssd1306/   # SSD1306 组件（字体数据）
 ```
 
 ---
 
-## 🚀 开发进度
+## BLE 调试
 
-- [x] 板子验证 — OLED 亮屏测试通过（Arduino U8g2）
-- [x] ESP-IDF 项目搭建 — LED 闪烁 + OLED 文字显示
-- [x] WiFi 连接 + OLED 显示
-- [x] Web 服务器 — 手机浏览器查看系统状态
-- [ ] NTP 网络时钟
-- [ ] ......（持续更新）
+使用 nRF Connect 或任意 BLE 调试工具：
+
+1. 扫描 → 找到 **ESP32-C3 OLED**
+2. 连接 → Service UUID `7a4b0001`
+3. 读取/订阅 Characteristic UUID `7a4b0002`
+
+返回数据格式：
+```
+Up:00:05:23|RSSI:-67dBm|IP:192.168.3.34
+```
 
 ---
 
-## 📄 资料
+## 开发进度
+
+- [x] OLED 亮屏测试（Arduino U8g2）
+- [x] ESP-IDF 项目 — LED 闪烁 + OLED 文字
+- [x] WiFi 连接 + OLED 状态显示
+- [x] BLE 蓝牙服务（NimBLE）
+- [x] WiFi 信号强度 RSSI 实时监控
+- [ ] NTP 网络时钟
+
+---
+
+## 资料
 
 - [ESP32-C3 数据手册](https://www.espressif.com/sites/default/files/documentation/esp32-c3_datasheet_cn.pdf)
 - [ESP-IDF 编程指南](https://docs.espressif.com/projects/esp-idf/zh_CN/latest/esp32c3/)
-- [SSD1306 OLED 驱动](https://github.com/olikraus/u8g2)
+- [SSD1306 OLED 驱动 (U8g2)](https://github.com/olikraus/u8g2)
+- [NimBLE-Arduino](https://github.com/h2zero/NimBLE-Arduino)
