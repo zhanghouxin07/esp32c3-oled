@@ -1,6 +1,7 @@
 #include <U8g2lib.h>
 #include <WiFi.h>
 #include <NimBLEDevice.h>
+#include <time.h>
 
 #define led 8
 
@@ -106,6 +107,27 @@ void setup(void) {
   digitalWrite(led, HIGH);
   DBG("WiFi OK! IP=%s RSSI=%d\n", WiFi.localIP().toString().c_str(), WiFi.RSSI());
 
+  // NTP sync
+  oled_show("Syncing NTP...", "");
+  configTime(28800, 0, "pool.ntp.org", "ntp.aliyun.com");
+  struct tm ti;
+  int ntp_attempts = 0;
+  while (!getLocalTime(&ti)) {
+    delay(500);
+    ntp_attempts++;
+    snprintf(line1, sizeof(line1), "NTP %d/20", ntp_attempts);
+    oled_show(line1, "");
+    DBG("NTP wait %d\n", ntp_attempts);
+    if (ntp_attempts > 20) {
+      oled_show("NTP Failed!", "Will retry later");
+      DBG("NTP FAILED\n");
+      break;
+    }
+  }
+  if (ntp_attempts <= 20) {
+    DBG("NTP OK: %s\n", asctime(&ti));
+  }
+
   // Re-start BLE advertising after WiFi
   NimBLEDevice::startAdvertising();
   bleChar->setValue("ESP32-C3 OLED ready");
@@ -134,9 +156,9 @@ void loop(void) {
     last_rssi = rssi;
   }
 
-  // OLED 3-page cycle
+  // OLED 4-page cycle
   char line1[16], line2[16];
-  switch ((now / 3000) % 3) {
+  switch ((now / 3000) % 4) {
     case 0:
       sprintf(line1, "ESP32-C3");
       sprintf(line2, "%s", WiFi.localIP().toString().c_str());
@@ -149,6 +171,17 @@ void loop(void) {
       sprintf(line1, "BLE %s", bleConnected ? "Connected" : "Standby");
       sprintf(line2, "Clients: %d", bleServer->getConnectedCount());
       break;
+    case 3: {
+      struct tm ti;
+      if (getLocalTime(&ti)) {
+        sprintf(line1, "%04d-%02d-%02d", ti.tm_year + 1900, ti.tm_mon + 1, ti.tm_mday);
+        sprintf(line2, "%02d:%02d:%02d", ti.tm_hour, ti.tm_min, ti.tm_sec);
+      } else {
+        sprintf(line1, "NTP syncing...");
+        sprintf(line2, "");
+      }
+      break;
+    }
   }
 
   // BLE characteristic (keep under MTU=128)
